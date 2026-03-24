@@ -1,0 +1,7 @@
+services:
+  sensor-web:
+    container_name: sensor-web
+    image: ghcr.io/shipi1/sensor-web:latest
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
