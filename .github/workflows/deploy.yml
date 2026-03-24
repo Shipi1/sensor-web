@@ -40,3 +40,7 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ghcr.io/${{ steps.lowercase.outputs.owner }}/sensor-web:latest
+      - name: Trigger Watchtower
+        run: |
+          curl -H "Authorization: Bearer ${{ secrets.WATCHTOWER_TOKEN }}" \
+          http://165.1.123.182:8081/v1/update
