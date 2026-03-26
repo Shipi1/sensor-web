@@ -43,4 +43,4 @@ jobs:
       - name: Trigger Watchtower
         run: |
           curl -H "Authorization: Bearer ${{ secrets.WATCHTOWER_TOKEN }}" \
-          http://165.1.123.182:8081/v1/update
+          http://${{ secrets.VPS_IP }}:8081/v1/update
