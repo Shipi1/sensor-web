@@ -319,6 +319,17 @@ const httpServer = http.createServer((req, res) => {
       }
     }
 
+    // Fetch latest reading for live display on page load
+    fetch('/api/tent/readings?limit=1')
+      .then(res => res.json())
+      .then(data => {
+        if (data.length > 0) {
+          temp.textContent = parseFloat(data[0].temperature).toFixed(1);
+          hum.textContent  = parseFloat(data[0].humidity).toFixed(1);
+        }
+      })
+      .catch(() => {});
+
     loadHistory();
     // Refresh history every 5 minutes
     setInterval(loadHistory, 5 * 60 * 1000);
