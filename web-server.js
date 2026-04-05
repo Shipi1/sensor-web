@@ -1,6 +1,6 @@
 const http = require("http");
 
-const API_BASE = process.env.API_URL || "http://tent-database:3000/readings";
+const API_BASE = process.env.API_URL;
 
 console.log(`[API] Trying to connect to ${API_BASE}`);
 http
