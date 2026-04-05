@@ -4,6 +4,8 @@ services:
     image: ghcr.io/shipi1/sensor-web:latest
     ports:
       - "3001:3001"
+    env_file:
+      - .env
     restart: unless-stopped
     networks:
       - web
