@@ -294,9 +294,9 @@ const httpServer = http.createServer((req, res) => {
         let url;
 
         if (useHistory) {
-          url = '/api/history' + (since ? '?since=' + since : '');
+          url = '/api/tent/readings/history' + (since ? '?since=' + since : '');
         } else {
-          url = '/api/readings?since=' + since;
+          url = '/api/tent/readings?since=' + since;
         }
 
         const res = await fetch(url);
