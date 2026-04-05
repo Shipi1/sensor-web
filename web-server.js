@@ -1,49 +1,53 @@
-const http = require('http');
+const http = require("http");
 
-const API_BASE = process.env.API_URL || 'http://165.1.123.182/api/tent/readings';
+const API_BASE = process.env.API_URL || "http://ws-server:8080/readings";
 
 const httpServer = http.createServer((req, res) => {
-  const url = new URL(req.url, 'http://localhost');
+  const url = new URL(req.url, "http://localhost");
 
-  if (url.pathname === '/api/readings') {
+  if (url.pathname === "/api/readings") {
     // Forward query params (since, limit, sensor_id) to the upstream API
     const params = new URLSearchParams(url.searchParams);
-    if (!params.has('limit')) params.set('limit', '100000');
-    const apiUrl = API_BASE + '?' + params.toString();
+    if (!params.has("limit")) params.set("limit", "100000");
+    const apiUrl = API_BASE + "?" + params.toString();
 
-    http.get(apiUrl, (apiRes) => {
-      let body = '';
-      apiRes.on('data', (chunk) => body += chunk);
-      apiRes.on('end', () => {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(body);
+    http
+      .get(apiUrl, (apiRes) => {
+        let body = "";
+        apiRes.on("data", (chunk) => (body += chunk));
+        apiRes.on("end", () => {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(body);
+        });
+      })
+      .on("error", (err) => {
+        res.writeHead(502, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Failed to fetch readings" }));
       });
-    }).on('error', (err) => {
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Failed to fetch readings' }));
-    });
     return;
   }
 
-  if (url.pathname === '/api/history') {
+  if (url.pathname === "/api/history") {
     const params = new URLSearchParams(url.searchParams);
     const qs = params.toString();
-    const apiUrl = API_BASE + '/history' + (qs ? '?' + qs : '');
-    http.get(apiUrl, (apiRes) => {
-      let body = '';
-      apiRes.on('data', (chunk) => body += chunk);
-      apiRes.on('end', () => {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(body);
+    const apiUrl = API_BASE + "/history" + (qs ? "?" + qs : "");
+    http
+      .get(apiUrl, (apiRes) => {
+        let body = "";
+        apiRes.on("data", (chunk) => (body += chunk));
+        apiRes.on("end", () => {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(body);
+        });
+      })
+      .on("error", (err) => {
+        res.writeHead(502, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Failed to fetch history" }));
       });
-    }).on('error', (err) => {
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Failed to fetch history' }));
-    });
     return;
   }
 
-  res.writeHead(200, { 'Content-Type': 'text/html' });
+  res.writeHead(200, { "Content-Type": "text/html" });
   res.end(`<!DOCTYPE html>
 <html>
 <head>
@@ -322,5 +326,5 @@ const httpServer = http.createServer((req, res) => {
 });
 
 httpServer.listen(3001, () => {
-  console.log('Web server running on port 3001');
+  console.log("Web server running on port 3001");
 });
