@@ -137,10 +137,10 @@ const httpServer = http.createServer((req, res) => {
   <div class="time-buttons">
     <button data-range="1800000" >30m</button>
     <button data-range="3600000">1h</button>
-    <button data-range="21600000">6h</button>
+    <button data-range="21600000" class="active">6h</button>
     <button data-range="86400000">24h</button>
     <button data-range="604800000">7d</button>
-    <button data-range="0" class="active">All</button>
+    <button data-range="0">All</button>
   </div>
 
   <div class="chart-container">
@@ -265,7 +265,7 @@ const httpServer = http.createServer((req, res) => {
     const humChart  = new Chart(document.getElementById('humChart'),  chartOpts('Humidity %', '#4ecdc4'));
 
     // --- Time range ---
-    let activeRange = 0; // ms, 0 = all
+    let activeRange = 21600000; // ms, default 6h
 
     document.querySelectorAll('.time-buttons button').forEach(btn => {
       btn.addEventListener('click', () => {
