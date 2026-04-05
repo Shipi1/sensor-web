@@ -2,14 +2,7 @@ const http = require("http");
 
 const API_BASE = process.env.API_URL;
 
-console.log(`[API] Trying to connect to ${API_BASE}`);
-http
-  .get(API_BASE + "?limit=1", (apiRes) => {
-    console.log(`[API] Successfully connected to ${API_BASE}`);
-  })
-  .on("error", (err) => {
-    console.error(`[API] Failed to connect to ${API_BASE}: ${err.message}`);
-  });
+console.log(`[ENV] API_URL=${API_BASE || "NOT SET"}`);
 
 const httpServer = http.createServer((req, res) => {
   const url = new URL(req.url, "http://localhost");
@@ -302,8 +295,8 @@ const httpServer = http.createServer((req, res) => {
         const res = await fetch(url);
         const data = await res.json();
 
-        // API returns newest first — show latest reading immediately
-        if (data.length > 0) {
+        // Only update live display from raw readings, not averaged buckets
+        if (!useHistory && data.length > 0) {
           const latest = data[0];
           temp.textContent = parseFloat(latest.temperature).toFixed(1);
           hum.textContent  = parseFloat(latest.humidity).toFixed(1);
