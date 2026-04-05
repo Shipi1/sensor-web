@@ -2,6 +2,13 @@ const http = require("http");
 
 const API_BASE = process.env.API_URL || "http://ws-server:8080/readings";
 
+console.log(`[API] Trying to connect to ${API_BASE}`);
+http.get(API_BASE + "?limit=1", (apiRes) => {
+  console.log(`[API] Successfully connected to ${API_BASE}`);
+}).on("error", (err) => {
+  console.error(`[API] Failed to connect to ${API_BASE}: ${err.message}`);
+});
+
 const httpServer = http.createServer((req, res) => {
   const url = new URL(req.url, "http://localhost");
 
