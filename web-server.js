@@ -1,6 +1,10 @@
 const http = require("http");
+const https = require("https");
 
 const API_BASE = process.env.API_URL;
+
+// Pick http or https based on the upstream URL
+const upstream = API_BASE?.startsWith("https") ? https : http;
 
 console.log(`[ENV] API_URL=${API_BASE || "NOT SET"}`);
 
@@ -13,7 +17,7 @@ const httpServer = http.createServer((req, res) => {
     if (!params.has("limit")) params.set("limit", "100000");
     const apiUrl = API_BASE + "?" + params.toString();
 
-    http
+    upstream
       .get(apiUrl, (apiRes) => {
         let body = "";
         apiRes.on("data", (chunk) => (body += chunk));
@@ -33,7 +37,7 @@ const httpServer = http.createServer((req, res) => {
     const params = new URLSearchParams(url.searchParams);
     const qs = params.toString();
     const apiUrl = API_BASE + "/history" + (qs ? "?" + qs : "");
-    http
+    upstream
       .get(apiUrl, (apiRes) => {
         let body = "";
         apiRes.on("data", (chunk) => (body += chunk));
@@ -287,9 +291,9 @@ const httpServer = http.createServer((req, res) => {
         let url;
 
         if (useHistory) {
-          url = '/api/tent/readings/history' + (since ? '?since=' + since : '');
+          url = '/api/history' + (since ? '?since=' + since : '');
         } else {
-          url = '/api/tent/readings?since=' + since;
+          url = '/api/readings?since=' + since;
         }
 
         const res = await fetch(url);
@@ -320,7 +324,7 @@ const httpServer = http.createServer((req, res) => {
     }
 
     // Fetch latest reading for live display on page load
-    fetch('/api/tent/readings?limit=1')
+    fetch('/api/readings?limit=1')
       .then(res => res.json())
       .then(data => {
         if (data.length > 0) {
