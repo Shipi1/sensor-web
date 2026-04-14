@@ -164,7 +164,8 @@ const httpServer = http.createServer((req, res) => {
 
     // --- Live WebSocket ---
     function connect() {
-      const ws = new WebSocket('ws://165.1.123.182:8080');
+      const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+      const ws = new WebSocket(wsProto + '://165.1.123.182:8080');
 
       ws.onopen = () => {
         status.textContent = '● connected';
