@@ -292,9 +292,9 @@ const httpServer = http.createServer((req, res) => {
         let url;
 
         if (useHistory) {
-          url = '/api/history' + (since ? '?since=' + since : '');
+          url = '/api/tent/readings/history' + (since ? '?since=' + since : '');
         } else {
-          url = '/api/readings?since=' + since;
+          url = '/api/tent/readings?since=' + since;
         }
 
         const res = await fetch(url);
@@ -325,7 +325,7 @@ const httpServer = http.createServer((req, res) => {
     }
 
     // Fetch latest reading for live display on page load
-    fetch('/api/readings?limit=1')
+    fetch('/api/tent/readings?limit=1')
       .then(res => res.json())
       .then(data => {
         if (data.length > 0) {
