@@ -1,18 +1,19 @@
 import argparse
-import requests
-from datetime import datetime
 from collections import defaultdict
+from datetime import datetime
 
-API_URL = "http://165.1.123.182/api/tent/readings/history"
+import requests
+
+API_URL = "https://shipisnature.com/api/tent/readings/history"
 EXPECTED_PER_BUCKET = 20  # 10min bucket, 30s interval = 20 readings
-BUCKET_STEP = 600         # 10 minutes in seconds
+BUCKET_STEP = 600  # 10 minutes in seconds
 
 WINDOWS = {
     "30m": 30 * 60,
-    "1h":  1  * 3600,
-    "6h":  6  * 3600,
+    "1h": 1 * 3600,
+    "6h": 6 * 3600,
     "24h": 24 * 3600,
-    "7d":  7  * 86400,
+    "7d": 7 * 86400,
     "all": None,
 }
 
@@ -48,7 +49,7 @@ if not data:
     exit(0)
 
 first_ts = data[0]["bucket"]
-last_ts  = data[-1]["bucket"]
+last_ts = data[-1]["bucket"]
 
 # If a window is set, extend the expected range forward to now
 # so that a fully-offline tail is also counted
@@ -58,7 +59,9 @@ else:
     range_end = last_ts
 
 print(f"Window : {args.window}")
-print(f"Range  : {datetime.fromtimestamp(first_ts if window_seconds is None else now_ts - window_seconds).strftime('%Y-%m-%d %H:%M')} -> {datetime.fromtimestamp(range_end).strftime('%Y-%m-%d %H:%M')}")
+print(
+    f"Range  : {datetime.fromtimestamp(first_ts if window_seconds is None else now_ts - window_seconds).strftime('%Y-%m-%d %H:%M')} -> {datetime.fromtimestamp(range_end).strftime('%Y-%m-%d %H:%M')}"
+)
 print()
 
 # Build lookup of received readings keyed by bucket timestamp
@@ -75,7 +78,7 @@ ts = range_start
 while ts <= range_end:
     hour_ts = (ts // 3600) * 3600
     hours[hour_ts]["expected"] += EXPECTED_PER_BUCKET
-    hours[hour_ts]["count"]    += received.get(ts, 0)
+    hours[hour_ts]["count"] += received.get(ts, 0)
     ts += BUCKET_STEP
 
 # Print sorted by time
@@ -87,11 +90,13 @@ for ts in sorted(hours.keys()):
     uptime = min(100, (h["count"] / h["expected"]) * 100) if h["expected"] else 0
     time_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
     marker = "  <<< OFFLINE" if uptime < 10 else ("  < low" if uptime < 90 else "")
-    print(f"{time_str:<22} {h['count']:>10} {h['expected']:>10} {uptime:>9.1f}%{marker}")
+    print(
+        f"{time_str:<22} {h['count']:>10} {h['expected']:>10} {uptime:>9.1f}%{marker}"
+    )
 
 # Total
-total_count    = sum(h["count"]    for h in hours.values())
+total_count = sum(h["count"] for h in hours.values())
 total_expected = sum(h["expected"] for h in hours.values())
-total_uptime   = min(100, (total_count / total_expected) * 100) if total_expected else 0
+total_uptime = min(100, (total_count / total_expected) * 100) if total_expected else 0
 print("-" * 55)
 print(f"{'TOTAL':<22} {total_count:>10} {total_expected:>10} {total_uptime:>9.1f}%")

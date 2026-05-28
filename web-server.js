@@ -11,8 +11,7 @@ console.log(`[ENV] API_URL=${API_BASE || "NOT SET"}`);
 const httpServer = http.createServer((req, res) => {
   const url = new URL(req.url, "http://localhost");
 
-  if (url.pathname === "/api/readings") {
-    // Forward query params (since, limit, sensor_id) to the upstream API
+  if (url.pathname === "/api/tent/readings") {
     const params = new URLSearchParams(url.searchParams);
     if (!params.has("limit")) params.set("limit", "100000");
     const apiUrl = API_BASE + "?" + params.toString();
@@ -33,7 +32,7 @@ const httpServer = http.createServer((req, res) => {
     return;
   }
 
-  if (url.pathname === "/api/history") {
+  if (url.pathname === "/api/tent/readings/history") {
     const params = new URLSearchParams(url.searchParams);
     const qs = params.toString();
     const apiUrl = API_BASE + "/history" + (qs ? "?" + qs : "");
@@ -89,6 +88,9 @@ const httpServer = http.createServer((req, res) => {
     .status { margin-top: 30px; font-size: 0.8rem; color: #444; }
     .status.connected { color: #4ecdc4; }
     .status.disconnected { color: #ff6b6b; }
+    .uptime { color: #777; margin-left: 12px; }
+    #monitors { display: flex; flex-direction: column; gap: 40px; width: 100%; align-items: center; }
+    .monitor { display: flex; flex-direction: column; align-items: center; width: 100%; }
     .chart-container {
       background: #1e1e1e;
       border-radius: 20px;
@@ -104,6 +106,25 @@ const httpServer = http.createServer((req, res) => {
       margin-bottom: 20px;
       text-align: center;
     }
+    .zone-controls {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 20px;
+      font-size: 0.8rem;
+      color: #777;
+    }
+    .zone-controls input {
+      background: #2a2a2a;
+      color: #eee;
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 4px 8px;
+      width: 70px;
+      font-size: 0.85rem;
+    }
+    .zone-controls input:focus { outline: none; border-color: #4ecdc4; }
     canvas { width: 100% !important; }
     .time-buttons {
       display: flex;
@@ -129,14 +150,7 @@ const httpServer = http.createServer((req, res) => {
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>🍄 Grow Tent Monitor</h1>
-    <div class="value temp" id="temp">--.-</div>
-    <div class="label">TEMPERATURE °C</div>
-    <div class="value hum" id="hum">--.-</div>
-    <div class="label">HUMIDITY %</div>
-    <div class="status disconnected" id="status">● disconnected</div>
-  </div>
+  <div id="monitors"></div>
 
   <div class="time-buttons">
     <button data-range="1800000" >30m</button>
@@ -147,40 +161,23 @@ const httpServer = http.createServer((req, res) => {
     <button data-range="0">All</button>
   </div>
 
-  <div class="chart-container">
-    <h2>Temperature History</h2>
-    <canvas id="tempChart"></canvas>
-  </div>
-
-  <div class="chart-container">
-    <h2>Humidity History</h2>
-    <canvas id="humChart"></canvas>
-  </div>
-
   <script>
-    const temp   = document.getElementById('temp');
-    const hum    = document.getElementById('hum');
-    const status = document.getElementById('status');
-
-    // --- Live WebSocket ---
+    // --- Shared WebSocket dispatcher ---
+    const wsListeners = new Set();
+    let wsStatus = 'disconnected';
     function connect() {
-      const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
-      const ws = new WebSocket(wsProto + '://shipisnature.com:8443');
-
+      const ws = new WebSocket('wss://shipisnature.com:8443');
       ws.onopen = () => {
-        status.textContent = '● connected';
-        status.className = 'status connected';
+        wsStatus = 'connected';
+        wsListeners.forEach(fn => fn({ type: 'status', status: 'connected' }));
       };
-
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
-        temp.textContent = parseFloat(data.temperature).toFixed(1);
-        hum.textContent  = parseFloat(data.humidity).toFixed(1);
+        wsListeners.forEach(fn => fn({ type: 'reading', data }));
       };
-
       ws.onclose = () => {
-        status.textContent = '● disconnected';
-        status.className = 'status disconnected';
+        wsStatus = 'disconnected';
+        wsListeners.forEach(fn => fn({ type: 'status', status: 'disconnected' }));
         setTimeout(connect, 3000);
       };
     }
@@ -230,7 +227,7 @@ const httpServer = http.createServer((req, res) => {
       },
     });
 
-    const chartOpts = (label, color, goodMin = null, goodMax = null, yMin = undefined, yMax = undefined) => ({
+    const chartOpts = (label, color) => ({
       type: 'line',
       data: {
         datasets: [{
@@ -247,7 +244,7 @@ const httpServer = http.createServer((req, res) => {
         responsive: true,
         plugins: {
           legend: { display: false },
-          annotation: goodMin !== null ? { annotations: rangeAnnotation(goodMin, goodMax) } : {},
+          annotation: { annotations: {} },
         },
         scales: {
           x: {
@@ -257,8 +254,6 @@ const httpServer = http.createServer((req, res) => {
             grid: { color: '#2a2a2a' },
           },
           y: {
-            ...(yMin !== undefined && { min: yMin }),
-            ...(yMax !== undefined && { max: yMax }),
             ticks: { color: '#555' },
             grid: { color: '#2a2a2a' },
           }
@@ -266,78 +261,211 @@ const httpServer = http.createServer((req, res) => {
       }
     });
 
-    const tempChart = new Chart(document.getElementById('tempChart'), chartOpts('Temperature °C', '#ff6b6b', 20, 27, 15, 30));
-    const humChart  = new Chart(document.getElementById('humChart'),  chartOpts('Humidity %', '#4ecdc4'));
+    // --- Constants ---
+    const USE_HISTORY_THRESHOLD = 3600000; // ranges > 1h use bucketed history
+    const READING_INTERVAL_SEC = 30;       // one reading every 30s
+    const BUCKET_STEP_SEC = 600;           // 10-min buckets
+    const EXPECTED_PER_BUCKET = 20;        // 600s / 30s
 
-    // --- Time range ---
-    let activeRange = 21600000; // ms, default 6h
+    // --- Monitor factory ---
+    function createMonitor({ sensorId = null, label, defaults = {} }) {
+      const storageKey = 'goodZone:' + (sensorId ?? 'default');
+      const ZONE_DEFAULTS = { tempMin: 20, tempMax: 27, humMin: 85, humMax: 95, ...defaults };
+      const zone = { ...ZONE_DEFAULTS, ...JSON.parse(localStorage.getItem(storageKey) || '{}') };
+
+      // Build DOM
+      const root = document.createElement('div');
+      root.className = 'monitor';
+      root.innerHTML = \`
+        <div class="card">
+          <h1>\${label}</h1>
+          <div class="value temp">--.-</div>
+          <div class="label">TEMPERATURE °C</div>
+          <div class="value hum">--.-</div>
+          <div class="label">HUMIDITY %</div>
+          <div class="status disconnected">● disconnected<span class="uptime"></span></div>
+        </div>
+        <div class="chart-container">
+          <h2>Temperature History</h2>
+          <div class="zone-controls">
+            <span>Good zone:</span>
+            <input type="number" class="z-tempMin" step="0.1" placeholder="min">
+            <span>–</span>
+            <input type="number" class="z-tempMax" step="0.1" placeholder="max">
+            <span>°C</span>
+          </div>
+          <canvas class="tempChart"></canvas>
+        </div>
+        <div class="chart-container">
+          <h2>Humidity History</h2>
+          <div class="zone-controls">
+            <span>Good zone:</span>
+            <input type="number" class="z-humMin" step="0.1" placeholder="min">
+            <span>–</span>
+            <input type="number" class="z-humMax" step="0.1" placeholder="max">
+            <span>%</span>
+          </div>
+          <canvas class="humChart"></canvas>
+        </div>
+      \`;
+      document.getElementById('monitors').appendChild(root);
+
+      const $ = sel => root.querySelector(sel);
+      const tempEl = $('.value.temp');
+      const humEl = $('.value.hum');
+      const statusEl = $('.status');
+      const uptimeEl = $('.uptime');
+
+      const tempChart = new Chart($('.tempChart'), chartOpts('Temperature °C', '#ff6b6b'));
+      const humChart = new Chart($('.humChart'), chartOpts('Humidity %', '#4ecdc4'));
+
+      // Zone controls
+      const applyZone = (chart, minVal, maxVal) => {
+        const min = parseFloat(minVal);
+        const max = parseFloat(maxVal);
+        chart.options.plugins.annotation.annotations =
+          Number.isFinite(min) && Number.isFinite(max) && max > min
+            ? rangeAnnotation(min, max)
+            : {};
+        chart.update();
+      };
+      const refreshZones = () => {
+        applyZone(tempChart, zone.tempMin, zone.tempMax);
+        applyZone(humChart, zone.humMin, zone.humMax);
+      };
+      ['tempMin', 'tempMax', 'humMin', 'humMax'].forEach(key => {
+        const el = $('.z-' + key);
+        el.value = zone[key];
+        el.addEventListener('input', () => {
+          zone[key] = el.value;
+          localStorage.setItem(storageKey, JSON.stringify(zone));
+          refreshZones();
+        });
+      });
+      refreshZones();
+
+      // Subscribe to shared WS
+      const setStatus = (state) => {
+        statusEl.textContent = state === 'connected' ? '● connected' : '● disconnected';
+        statusEl.className = 'status ' + state;
+        statusEl.appendChild(uptimeEl);
+      };
+      setStatus(wsStatus);
+      wsListeners.add((msg) => {
+        if (msg.type === 'status') {
+          setStatus(msg.status);
+        } else if (msg.type === 'reading') {
+          // Filter by sensor_id if we have one set
+          if (sensorId !== null && msg.data.sensor_id !== sensorId) return;
+          tempEl.textContent = parseFloat(msg.data.temperature).toFixed(1);
+          humEl.textContent  = parseFloat(msg.data.humidity).toFixed(1);
+        }
+      });
+
+      // Compute uptime % from the fetched data + active range
+      const computeUptime = (data, useHistory, rangeMs) => {
+        if (data.length === 0) return 0;
+        if (useHistory) {
+          let windowSec;
+          if (rangeMs > 0) {
+            windowSec = rangeMs / 1000;
+          } else {
+            // "all": span from oldest bucket to now
+            const oldest = data.reduce((m, d) => Math.min(m, d.bucket), Infinity);
+            windowSec = Date.now() / 1000 - oldest;
+          }
+          const expectedBuckets = Math.max(1, Math.ceil(windowSec / BUCKET_STEP_SEC));
+          const expected = expectedBuckets * EXPECTED_PER_BUCKET;
+          const received = data.reduce((sum, d) => sum + (d.count || 0), 0);
+          return Math.min(100, (received / expected) * 100);
+        } else {
+          const expected = Math.max(1, rangeMs / 1000 / READING_INTERVAL_SEC);
+          return Math.min(100, (data.length / expected) * 100);
+        }
+      };
+
+      const rangeLabel = (rangeMs) => {
+        if (rangeMs === 0) return 'all';
+        const btn = document.querySelector('.time-buttons button[data-range="' + rangeMs + '"]');
+        return btn ? btn.textContent : '';
+      };
+
+      // Fetch + render
+      async function loadHistory(rangeMs) {
+        try {
+          const useHistory = rangeMs === 0 || rangeMs > USE_HISTORY_THRESHOLD;
+          const since = rangeMs > 0 ? Math.floor((Date.now() - rangeMs) / 1000) : null;
+          const params = new URLSearchParams();
+          if (since) params.set('since', since);
+          if (sensorId !== null) params.set('sensor_id', sensorId);
+          const base = useHistory ? '/api/tent/readings/history' : '/api/tent/readings';
+          if (!useHistory && !since) params.set('since', Math.floor(Date.now() / 1000) - 3600);
+          const qs = params.toString();
+          const url = base + (qs ? '?' + qs : '');
+
+          const res = await fetch(url);
+          const data = await res.json();
+
+          if (!useHistory && data.length > 0) {
+            const latest = data[0];
+            tempEl.textContent = parseFloat(latest.temperature).toFixed(1);
+            humEl.textContent  = parseFloat(latest.humidity).toFixed(1);
+          }
+
+          const uptime = computeUptime(data, useHistory, rangeMs);
+          uptimeEl.textContent = ' · ' + uptime.toFixed(1) + '% uptime (' + rangeLabel(rangeMs) + ')';
+
+          data.reverse();
+          const timeKey = useHistory ? 'bucket' : 'timestamp';
+          tempChart.data.datasets[0].data = data.map(d => ({ x: d[timeKey] * 1000, y: d.temperature }));
+          humChart.data.datasets[0].data  = data.map(d => ({ x: d[timeKey] * 1000, y: d.humidity }));
+          tempChart.update();
+          humChart.update();
+        } catch (err) {
+          console.error('Failed to load history for', sensorId ?? 'default', err);
+        }
+      }
+
+      // Initial latest-reading fetch for live display
+      const latestParams = new URLSearchParams({ limit: '1' });
+      if (sensorId !== null) latestParams.set('sensor_id', sensorId);
+      fetch('/api/tent/readings?' + latestParams.toString())
+        .then(res => res.json())
+        .then(data => {
+          if (data.length > 0) {
+            tempEl.textContent = parseFloat(data[0].temperature).toFixed(1);
+            humEl.textContent  = parseFloat(data[0].humidity).toFixed(1);
+          }
+        })
+        .catch(() => {});
+
+      return { loadHistory };
+    }
+
+    // --- Bootstrap monitors ---
+    const monitors = [
+      createMonitor({ label: '🍄 Grow Tent Monitor' }),
+      // To add another: createMonitor({ sensorId: 'second-sensor-id', label: 'Other Tent' }),
+    ];
+
+    // Place the (global) time-range buttons between the first monitor's card and its charts
+    document.querySelector('.monitor .card').after(document.querySelector('.time-buttons'));
+
+    // --- Global time range ---
+    let activeRange = 21600000;
+    const refreshAll = () => monitors.forEach(m => m.loadHistory(activeRange));
 
     document.querySelectorAll('.time-buttons button').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelector('.time-buttons button.active').classList.remove('active');
         btn.classList.add('active');
         activeRange = parseInt(btn.dataset.range);
-        loadHistory();
+        refreshAll();
       });
     });
 
-    // --- Fetch historical data ---
-    // 30m, 1h = raw readings | 6h+ and All = 10min avg buckets
-    const USE_HISTORY_THRESHOLD = 3600000; // ranges > 1h use /api/history
-
-    async function loadHistory() {
-      try {
-        const useHistory = activeRange === 0 || activeRange > USE_HISTORY_THRESHOLD;
-        const since = activeRange > 0 ? Math.floor((Date.now() - activeRange) / 1000) : null;
-        let url;
-
-        if (useHistory) {
-          url = '/api/tent/readings/history' + (since ? '?since=' + since : '');
-        } else {
-          url = '/api/tent/readings?since=' + since;
-        }
-
-        const res = await fetch(url);
-        const data = await res.json();
-
-        // Only update live display from raw readings, not averaged buckets
-        if (!useHistory && data.length > 0) {
-          const latest = data[0];
-          temp.textContent = parseFloat(latest.temperature).toFixed(1);
-          hum.textContent  = parseFloat(latest.humidity).toFixed(1);
-        }
-
-        // Reverse for chronological order
-        data.reverse();
-
-        const timeKey = useHistory ? 'bucket' : 'timestamp';
-        const tempData = data.map(d => ({ x: d[timeKey] * 1000, y: d.temperature }));
-        const humData  = data.map(d => ({ x: d[timeKey] * 1000, y: d.humidity }));
-
-        tempChart.data.datasets[0].data = tempData;
-        humChart.data.datasets[0].data  = humData;
-
-        tempChart.update();
-        humChart.update();
-      } catch (err) {
-        console.error('Failed to load history:', err);
-      }
-    }
-
-    // Fetch latest reading for live display on page load
-    fetch('/api/tent/readings?limit=1')
-      .then(res => res.json())
-      .then(data => {
-        if (data.length > 0) {
-          temp.textContent = parseFloat(data[0].temperature).toFixed(1);
-          hum.textContent  = parseFloat(data[0].humidity).toFixed(1);
-        }
-      })
-      .catch(() => {});
-
-    loadHistory();
-    // Refresh history every 5 minutes
-    setInterval(loadHistory, 5 * 60 * 1000);
+    refreshAll();
+    setInterval(refreshAll, 5 * 60 * 1000);
   </script>
 </body>
 </html>`);
