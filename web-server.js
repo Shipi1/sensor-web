@@ -89,8 +89,49 @@ const httpServer = http.createServer((req, res) => {
     .status.connected { color: #4ecdc4; }
     .status.disconnected { color: #ff6b6b; }
     .uptime { color: #777; margin-left: 12px; }
-    #monitors { display: flex; flex-direction: column; gap: 40px; width: 100%; align-items: center; }
-    .monitor { display: flex; flex-direction: column; align-items: center; width: 100%; }
+    .sensor-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+    #monitors {
+      display: flex;
+      flex-direction: row;
+      flex-wrap: nowrap;
+      gap: 24px;
+      width: 100%;
+      max-width: 1000px;
+      justify-content: center;
+      align-items: stretch;
+    }
+    .monitor {
+      flex: 1 1 0;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .monitor .card { width: 100%; }
+    #charts {
+      display: flex;
+      flex-direction: column;
+      gap: 30px;
+      width: 100%;
+      align-items: center;
+      margin-top: 30px;
+    }
+    @media (max-width: 600px) {
+      body { padding: 20px 10px; }
+      .card { padding: 24px 16px; }
+      h1 { font-size: 1rem; margin-bottom: 20px; }
+      .value { font-size: 2.2rem; }
+      .label { font-size: 0.7rem; margin-bottom: 15px; }
+      .status { margin-top: 18px; font-size: 0.7rem; }
+      .uptime { margin-left: 6px; display: block; margin-top: 4px; }
+      #monitors { gap: 12px; }
+    }
     .chart-container {
       background: #1e1e1e;
       border-radius: 20px;
@@ -130,7 +171,7 @@ const httpServer = http.createServer((req, res) => {
       display: flex;
       justify-content: center;
       gap: 8px;
-      margin-top: 30px;
+      margin-bottom: 40px;
     }
     .time-buttons button {
       background: #2a2a2a;
@@ -150,8 +191,6 @@ const httpServer = http.createServer((req, res) => {
   </style>
 </head>
 <body>
-  <div id="monitors"></div>
-
   <div class="time-buttons">
     <button data-range="1800000" >30m</button>
     <button data-range="3600000">1h</button>
@@ -160,6 +199,9 @@ const httpServer = http.createServer((req, res) => {
     <button data-range="604800000">7d</button>
     <button data-range="0">All</button>
   </div>
+
+  <div id="monitors"></div>
+  <div id="charts"></div>
 
   <script>
     // --- Shared WebSocket dispatcher ---
@@ -227,23 +269,13 @@ const httpServer = http.createServer((req, res) => {
       },
     });
 
-    const chartOpts = (label, color) => ({
+    const sharedChartOpts = () => ({
       type: 'line',
-      data: {
-        datasets: [{
-          label,
-          borderColor: color,
-          backgroundColor: color + '20',
-          fill: true,
-          tension: 0.3,
-          pointRadius: 0,
-          borderWidth: 2,
-        }]
-      },
+      data: { datasets: [] },
       options: {
         responsive: true,
         plugins: {
-          legend: { display: false },
+          legend: { display: true, labels: { color: '#aaa', boxWidth: 12 } },
           annotation: { annotations: {} },
         },
         scales: {
@@ -267,45 +299,81 @@ const httpServer = http.createServer((req, res) => {
     const BUCKET_STEP_SEC = 600;           // 10-min buckets
     const EXPECTED_PER_BUCKET = 20;        // 600s / 30s
 
-    // --- Monitor factory ---
-    function createMonitor({ sensorId = null, label, defaults = {} }) {
-      const storageKey = 'goodZone:' + (sensorId ?? 'default');
-      const ZONE_DEFAULTS = { tempMin: 20, tempMax: 27, humMin: 85, humMax: 95, ...defaults };
-      const zone = { ...ZONE_DEFAULTS, ...JSON.parse(localStorage.getItem(storageKey) || '{}') };
+    // --- Shared chart factory (one chart, N sensor lines) ---
+    function createSharedChart({ metric, title, unit, defaults }) {
+      const storageKey = 'goodZone:' + metric;
+      const zone = { min: defaults.min, max: defaults.max, ...JSON.parse(localStorage.getItem(storageKey) || '{}') };
 
-      // Build DOM
+      const root = document.createElement('div');
+      root.className = 'chart-container';
+      root.innerHTML = \`
+        <h2>\${title}</h2>
+        <div class="zone-controls">
+          <span>Good zone:</span>
+          <input type="number" class="z-min" step="0.1" placeholder="min">
+          <span>–</span>
+          <input type="number" class="z-max" step="0.1" placeholder="max">
+          <span>\${unit}</span>
+        </div>
+        <canvas></canvas>
+      \`;
+      document.getElementById('charts').appendChild(root);
+
+      const chart = new Chart(root.querySelector('canvas'), sharedChartOpts());
+
+      const applyZone = () => {
+        const min = parseFloat(zone.min);
+        const max = parseFloat(zone.max);
+        chart.options.plugins.annotation.annotations =
+          Number.isFinite(min) && Number.isFinite(max) && max > min
+            ? rangeAnnotation(min, max)
+            : {};
+        chart.update();
+      };
+      ['min', 'max'].forEach(key => {
+        const el = root.querySelector('.z-' + key);
+        el.value = zone[key];
+        el.addEventListener('input', () => {
+          zone[key] = el.value;
+          localStorage.setItem(storageKey, JSON.stringify(zone));
+          applyZone();
+        });
+      });
+      applyZone();
+
+      return {
+        addSeries(label, color) {
+          const idx = chart.data.datasets.length;
+          chart.data.datasets.push({
+            label,
+            borderColor: color,
+            backgroundColor: color + '20',
+            fill: false,
+            tension: 0.3,
+            pointRadius: 0,
+            borderWidth: 2,
+            data: [],
+          });
+          return (points) => {
+            chart.data.datasets[idx].data = points;
+            chart.update();
+          };
+        },
+      };
+    }
+
+    // --- Monitor factory (card only; charts are shared) ---
+    function createMonitor({ sensorId = null, label, color, tempChart, humChart }) {
       const root = document.createElement('div');
       root.className = 'monitor';
       root.innerHTML = \`
         <div class="card">
-          <h1>\${label}</h1>
+          <h1><span class="sensor-dot" style="background:\${color}"></span>\${label}</h1>
           <div class="value temp">--.-</div>
           <div class="label">TEMPERATURE °C</div>
           <div class="value hum">--.-</div>
           <div class="label">HUMIDITY %</div>
           <div class="status disconnected">● disconnected<span class="uptime"></span></div>
-        </div>
-        <div class="chart-container">
-          <h2>Temperature History</h2>
-          <div class="zone-controls">
-            <span>Good zone:</span>
-            <input type="number" class="z-tempMin" step="0.1" placeholder="min">
-            <span>–</span>
-            <input type="number" class="z-tempMax" step="0.1" placeholder="max">
-            <span>°C</span>
-          </div>
-          <canvas class="tempChart"></canvas>
-        </div>
-        <div class="chart-container">
-          <h2>Humidity History</h2>
-          <div class="zone-controls">
-            <span>Good zone:</span>
-            <input type="number" class="z-humMin" step="0.1" placeholder="min">
-            <span>–</span>
-            <input type="number" class="z-humMax" step="0.1" placeholder="max">
-            <span>%</span>
-          </div>
-          <canvas class="humChart"></canvas>
         </div>
       \`;
       document.getElementById('monitors').appendChild(root);
@@ -316,33 +384,8 @@ const httpServer = http.createServer((req, res) => {
       const statusEl = $('.status');
       const uptimeEl = $('.uptime');
 
-      const tempChart = new Chart($('.tempChart'), chartOpts('Temperature °C', '#ff6b6b'));
-      const humChart = new Chart($('.humChart'), chartOpts('Humidity %', '#4ecdc4'));
-
-      // Zone controls
-      const applyZone = (chart, minVal, maxVal) => {
-        const min = parseFloat(minVal);
-        const max = parseFloat(maxVal);
-        chart.options.plugins.annotation.annotations =
-          Number.isFinite(min) && Number.isFinite(max) && max > min
-            ? rangeAnnotation(min, max)
-            : {};
-        chart.update();
-      };
-      const refreshZones = () => {
-        applyZone(tempChart, zone.tempMin, zone.tempMax);
-        applyZone(humChart, zone.humMin, zone.humMax);
-      };
-      ['tempMin', 'tempMax', 'humMin', 'humMax'].forEach(key => {
-        const el = $('.z-' + key);
-        el.value = zone[key];
-        el.addEventListener('input', () => {
-          zone[key] = el.value;
-          localStorage.setItem(storageKey, JSON.stringify(zone));
-          refreshZones();
-        });
-      });
-      refreshZones();
+      const writeTemp = tempChart.addSeries(label, color);
+      const writeHum  = humChart.addSeries(label, color);
 
       // Subscribe to shared WS
       const setStatus = (state) => {
@@ -355,14 +398,12 @@ const httpServer = http.createServer((req, res) => {
         if (msg.type === 'status') {
           setStatus(msg.status);
         } else if (msg.type === 'reading') {
-          // Filter by sensor_id if we have one set
           if (sensorId !== null && msg.data.sensor_id !== sensorId) return;
           tempEl.textContent = parseFloat(msg.data.temperature).toFixed(1);
           humEl.textContent  = parseFloat(msg.data.humidity).toFixed(1);
         }
       });
 
-      // Compute uptime % from the fetched data + active range
       const computeUptime = (data, useHistory, rangeMs) => {
         if (data.length === 0) return 0;
         if (useHistory) {
@@ -370,7 +411,6 @@ const httpServer = http.createServer((req, res) => {
           if (rangeMs > 0) {
             windowSec = rangeMs / 1000;
           } else {
-            // "all": span from oldest bucket to now
             const oldest = data.reduce((m, d) => Math.min(m, d.bucket), Infinity);
             windowSec = Date.now() / 1000 - oldest;
           }
@@ -390,7 +430,6 @@ const httpServer = http.createServer((req, res) => {
         return btn ? btn.textContent : '';
       };
 
-      // Fetch + render
       async function loadHistory(rangeMs) {
         try {
           const useHistory = rangeMs === 0 || rangeMs > USE_HISTORY_THRESHOLD;
@@ -417,10 +456,8 @@ const httpServer = http.createServer((req, res) => {
 
           data.reverse();
           const timeKey = useHistory ? 'bucket' : 'timestamp';
-          tempChart.data.datasets[0].data = data.map(d => ({ x: d[timeKey] * 1000, y: d.temperature }));
-          humChart.data.datasets[0].data  = data.map(d => ({ x: d[timeKey] * 1000, y: d.humidity }));
-          tempChart.update();
-          humChart.update();
+          writeTemp(data.map(d => ({ x: d[timeKey] * 1000, y: d.temperature })));
+          writeHum (data.map(d => ({ x: d[timeKey] * 1000, y: d.humidity })));
         } catch (err) {
           console.error('Failed to load history for', sensorId ?? 'default', err);
         }
@@ -442,14 +479,21 @@ const httpServer = http.createServer((req, res) => {
       return { loadHistory };
     }
 
-    // --- Bootstrap monitors ---
-    const monitors = [
-      createMonitor({ label: '🍄 Grow Tent Monitor' }),
-      // To add another: createMonitor({ sensorId: 'second-sensor-id', label: 'Other Tent' }),
-    ];
+    // --- Bootstrap: build shared charts first, then monitors register lines on them ---
+    const tempChart = createSharedChart({
+      metric: 'temp', title: 'Temperature History', unit: '°C',
+      defaults: { min: 20, max: 27 },
+    });
+    const humChart = createSharedChart({
+      metric: 'hum', title: 'Humidity History', unit: '%',
+      defaults: { min: 85, max: 95 },
+    });
 
-    // Place the (global) time-range buttons between the first monitor's card and its charts
-    document.querySelector('.monitor .card').after(document.querySelector('.time-buttons'));
+    const SENSOR_COLORS = { 'sensor-01': '#ff6b6b', 'sensor-02': '#4dabf7' };
+    const monitors = [
+      createMonitor({ sensorId: 'sensor-01', label: '🖼️ Outside', color: SENSOR_COLORS['sensor-01'], tempChart, humChart }),
+      createMonitor({ sensorId: 'sensor-02', label: '🍄 Inside',  color: SENSOR_COLORS['sensor-02'], tempChart, humChart }),
+    ];
 
     // --- Global time range ---
     let activeRange = 21600000;
